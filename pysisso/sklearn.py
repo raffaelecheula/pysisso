@@ -81,6 +81,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         custodian_kwargs: Union[None, dict] = None,
         run_dir: Union[None, str] = "SISSO_dir",
         clean_run_dir: bool = False,
+        SISSO_exe: str = "SISSO",
     ):  # noqa: D417
         """Construct SISSORegressor class.
 
@@ -94,6 +95,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
             run_dir: Name of the directory where SISSO is run. If None, the directory
                 will be set automatically. It then contains a timestamp and is unique.
             clean_run_dir: Whether to clean the run directory after SISSO has run.
+            SISSO_exe: path to the SISSO executable.
         """
         self.ntask = ntask
         self.task_weighting = task_weighting
@@ -130,8 +132,9 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         self.custodian_kwargs = custodian_kwargs
         self.run_dir = run_dir
         self.clean_run_dir = clean_run_dir
+        self.SISSO_exe = SISSO_exe
 
-    def fit(self, X, y, index=None, columns=None, tasks=None):
+    def fit(self, X, y, index=None, columns=None, tasks=None, tasks_array=None):
         """Fit a SISSO regression based on inputs X and output y.
 
         This method supports Multi-Task SISSO. For Single-Task SISSO, y must have a
@@ -159,6 +162,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
             tasks: When Multi-Task SISSO is used, this is the list of string names
                 that will be used for each task/property. If None, "taskN"
                 with N=[1, ..., n_tasks] will be used.
+            tasks_array: Array of tasks for Multi-Task SISSO.
         """
         if not self.use_custodian:
             raise NotImplementedError
@@ -208,14 +212,29 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         # Set up data
         X = np.array(X)
         y = np.array(y)
-        if y.ndim == 1 or (y.ndim == 2 and y.shape[1] == 1):  # Single-Task SISSO
-            self.ntasks = 1  # pylint: disable=W0201
+        if y.ndim == 1 or (y.ndim == 2 and y.shape[1] == 1):
+            if tasks_array is None:  # Single-Task SISSO
+                self.ntasks = 1  # pylint: disable=W0201
+                nsample = None
+            else:  # Multi-Task SISSO
+                counts = {}
+                for task in tasks_array:
+                    if task in counts:
+                        counts[task] += 1
+                        if task_name != task:
+                            raise ValueError("tasks_array is not ordered.")
+                    else:
+                        counts[task] = 1
+                        task_name = task
+                tasks = list(counts.keys())
+                nsample = list(counts.values())
+                self.ntasks = len(tasks)
+                self.tasks_dict = {task: ii for ii, task in enumerate(tasks)}
             index = index or [
                 "sample{:d}".format(ii) for ii in range(1, X.shape[0] + 1)
             ]
             if len(index) != len(y) or len(index) != len(X):
                 raise ValueError("Index, X and y should have same size.")
-            nsample = None
         elif y.ndim == 2 and y.shape[1] > 1:  # Multi-Task SISSO
             self.ntasks = y.shape[1]  # pylint: disable=W0201
             samples_index = index or [
@@ -266,7 +285,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         with cd(self.run_dir):
             self.sisso_in.to_file(filename="SISSO.in")
             sisso_dat.to_file(filename="train.dat")
-            job = SISSOJob()
+            job = SISSOJob(SISSO_exe=self.SISSO_exe)
             c = Custodian(jobs=[job], handlers=[], validators=[])
             c.run()
             self.sisso_out = SISSOOut.from_file(  # pylint: disable=W0201
@@ -279,18 +298,28 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         ):  # TODO: add check here to not remove "." if the user passes . ?
             shutil.rmtree(self.run_dir)
 
-    def predict(self, X, index=None):
+    def predict(self, X, index=None, tasks_array=None):
         """Predict output based on a fitted SISSO regression.
 
         Args:
             X: Feature vectors as an array-like of shape (n_samples, n_features).
             index: List of string identifiers for each sample. If None, "sampleN"
                 with N=[1, ..., n_samples] will be used.
+            tasks_array: Array of tasks for Multi-Task SISSO.
         """
         X = np.array(X)
         index = index or ["item{:d}".format(ii) for ii in range(X.shape[0])]
         data = pd.DataFrame(X, index=index, columns=self.columns)
-        return self.sisso_out.model.predict(data)
+        if tasks_array is None:
+            y_pred = self.sisso_out.model.predict(data)
+        else:
+            indices = [self.tasks_dict[task] for task in tasks_array]
+            y_pred_all = self.sisso_out.model.predict(data)
+            y_pred = []
+            for ii in range(y_pred_all.shape[0]):
+                y_pred.append(y_pred_all[ii, indices[ii]])
+            y_pred = np.array(y_pred)
+        return y_pred
 
     @classmethod
     def OMP(
