@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, LeaveOneGroupOut
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from pysisso.sklearn import SISSORegressor
 
@@ -26,6 +26,11 @@ names_key = 'structure_name'
 y_dep_key = 'energy_ts'
 groups_key = 'reaction'
 tasks_keys = ['reaction']
+
+# Preprocess data.
+preprocess_data = False
+princ_comp_analys = False
+n_components = 10
 
 # Regression.
 regression = True
@@ -66,10 +71,13 @@ df = pd.read_csv(csv_file)
 print(f'Read file: {csv_file}')
 
 # Sort df for multi-task SISSO and extract tasks_array.
-df = df.sort_values(by=tasks_keys, ignore_index=True)
-tasks_array = df[tasks_keys[0]].to_numpy()
-for key in tasks_keys[1:]:
-    tasks_array += ' '+df[key].to_numpy()
+if multitask is True:
+    df = df.sort_values(by=tasks_keys, ignore_index=True)
+    tasks_array = df[tasks_keys[0]].to_numpy()
+    for key in tasks_keys[1:]:
+        tasks_array += ' '+df[key].to_numpy()
+else:
+    tasks_array = None
 
 names = df.pop(names_key).to_numpy()
 g_groups = df.pop(groups_key).to_numpy()
@@ -80,6 +88,58 @@ feature_names = df.columns.to_list()
 
 print(f'N. entries:  {X_indep.shape[0]:4d}')
 print(f'N. features: {X_indep.shape[1]:4d}')
+
+# -----------------------------------------------------------------------------
+# PREPROCESS DATA
+# -----------------------------------------------------------------------------
+
+if preprocess_data is True:
+
+    from sklearn.pipeline import make_pipeline
+    from sklearn.impute import SimpleImputer, KNNImputer
+    from sklearn.preprocessing import (
+        MaxAbsScaler,
+        StandardScaler,
+        RobustScaler,
+        Normalizer,
+        QuantileTransformer,
+    )
+
+    print_title('Preprocess data.')
+
+    trans_X = make_pipeline(
+        SimpleImputer(),
+        #KNNImputer(),
+        #MaxAbsScaler(),
+        #StandardScaler(),
+        RobustScaler(),
+        #Normalizer(),
+        #QuantileTransformer(),
+    )
+
+    X_indep = trans_X.fit_transform(X_indep)
+
+    print(f'N. features: {X_indep.shape[1]:4d}')
+
+# -----------------------------------------------------------------------------
+# PRINCIPAL COMPONENT ANALYSIS
+# -----------------------------------------------------------------------------
+
+if princ_comp_analys is True:
+
+    from sklearn.decomposition import PCA
+
+    print_title('Principal Component Analysis.')
+
+    pca = PCA(
+        random_state = random_state,
+        n_components = n_components,
+    )
+    X_indep = pca.fit_transform(X_indep)
+
+    feature_names = [f'feature_{ii:02d}' for ii in range(X_indep.shape[1])]
+
+    print(f'N. features: {X_indep.shape[1]:4d}')
 
 # -----------------------------------------------------------------------------
 # GET REGRESSOR
@@ -111,9 +171,6 @@ if regression is True:
     print(f'\nML model: {ml_model}')
 
     regr = get_regressor(ml_model=ml_model)
-
-    if multitask is False:
-        tasks_array = None
 
     regr.fit(
         X = X_indep,
@@ -172,9 +229,11 @@ if cross_validation is True:
     i_split = 0
     for train_index, test_index in train_test_splits:
 
+        names_train = names[train_index]
         y_train = y_dep[train_index]
         X_train = X_indep[train_index]
         g_train = g_groups[train_index]
+        names_test = names[test_index]
         y_test = y_dep[test_index]
         X_test = X_indep[test_index]
         g_test = g_groups[test_index]
@@ -231,7 +290,7 @@ if cross_validation is True:
             print(f'MAE test   = {mae_test:7.4f} eV')
             print(f'RMSE test  = {rmse_test:7.4f} eV')
 
-    print('Average')
+    print('\nAverage')
     mae_train_tot = np.average(err_abs_train_tot)
     rmse_train_tot = np.sqrt(np.average(err_sqr_train_tot))
     mae_test_tot = np.average(err_abs_test_tot)
