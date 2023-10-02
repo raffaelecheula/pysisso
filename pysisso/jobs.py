@@ -63,9 +63,9 @@ class SISSOJob(Job):
         if (
             self.nprocs > 1
         ):
-            cmd = ["mpirun", "-n", str(self.nprocs), str(self.SISSO_exe)]
+            cmd = ["mpirun", "-n", str(self.nprocs), exe]
         else:
-            cmd = self.SISSO_exe
+            cmd = exe
 
         with open(self.stdout_file, "w") as f_stdout, open(
             self.stderr_file, "w", buffering=1
