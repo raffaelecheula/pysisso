@@ -6,6 +6,7 @@
 
 """Module containing the custodian jobs for SISSO."""
 
+import os
 import subprocess
 
 from custodian.custodian import Job  # type: ignore
@@ -61,15 +62,17 @@ class SISSOJob(Job):
 
         if (
             self.nprocs > 1
-        ):  # pragma: no cover # Reason: obviously not yet implemented section of code.
-            raise NotImplementedError("Running SISSO with MPI not yet implemented.")
+        ):
+            cmd = ["mpirun", "-n", str(self.nprocs), str(self.SISSO_exe)]
         else:
-            cmd = exe
+            cmd = self.SISSO_exe
 
         with open(self.stdout_file, "w") as f_stdout, open(
             self.stderr_file, "w", buffering=1
         ) as f_stderr:
-            p = subprocess.Popen(cmd, stdin=None, stdout=f_stdout, stderr=f_stderr)
+            p = subprocess.Popen(
+                cmd, stdin=None, stdout=f_stdout, stderr=f_stderr, env=os.environ,
+            )
         return p
 
     def postprocess(self):

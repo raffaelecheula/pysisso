@@ -41,21 +41,26 @@ cross_valid_name  = 'crossvalid' # crossvalid | extrapolation
 n_splits = 5
 print_resul_train = False
 print_resul_inter = True
+
+# Plot results.
 parity_plots = True
 violin_plots = True
+parity_lim = 2.50
+violin_lim = 1.00
 
 # Random state.
 random_state = 0
 
 # SISSO parameters.
 SISSO_exe = "/home/rcheula/Programs/SISSO-3.0.2/bin/SISSO"
+nprocs = 8
 opset = '(+)(-)(*)(/)(exp)(exp-)(^-1)(^2)(^3)(sqrt)(cbrt)(log)(|-|)(sin)(cos)'
 rung_SISSO = 2
 dim_SISSO = 3
 
 # Plot parameters.
-fontsize = 16
-labelsize = 14
+fontsize = 18
+labelsize = 16
 
 # -----------------------------------------------------------------------------
 # READ CSV
@@ -156,6 +161,7 @@ def get_regressor(ml_model, i_split=-1):
             run_dir = f'SISSO_dir_{i_split+1}',
             clean_run_dir = False,
             SISSO_exe = SISSO_exe,
+            nprocs = nprocs,
         )
     
     return regr
@@ -172,25 +178,28 @@ if regression is True:
 
     regr = get_regressor(ml_model=ml_model)
 
+    X_regr = X_indep.copy()
+    y_regr = y_dep.copy()
+
     regr.fit(
-        X = X_indep,
-        y = y_dep,
+        X = X_regr,
+        y = y_regr,
         columns = feature_names,
         tasks_array = tasks_array,
     )
-    y_pred = regr.predict(
-        X = X_indep,
+    y_pred_regr = regr.predict(
+        X = X_regr,
         tasks_array = tasks_array,
-    ).reshape(y_dep.shape)
+    )
 
-    err_abs = np.abs(y_dep-y_pred)
-    err_sqr = np.power((y_dep-y_pred), 2)
-    mae = np.average(err_abs)
-    rmse = np.sqrt(np.average(err_sqr))
+    err_abs_regr = np.abs(y_regr-y_pred_regr)
+    err_sqr_regr = np.power((y_regr-y_pred_regr), 2)
+    mae_regr = np.average(err_abs_regr)
+    rmse_regr = np.sqrt(np.average(err_sqr_regr))
 
     print('Train')
-    print(f'MAE train  = {mae:7.4f} eV')
-    print(f'RMSE train = {rmse:7.4f} eV')
+    print(f'MAE train  = {mae_regr:7.4f} eV')
+    print(f'RMSE train = {rmse_regr:7.4f} eV')
 
 # -----------------------------------------------------------------------------
 # CROSS VALIDATION
@@ -199,11 +208,6 @@ if regression is True:
 if cross_validation is True:
 
     print_title(f'Cross validation ({cross_valid_name}).')
-
-    df_err_data = {
-        'Abs Err [eV]': [],
-        'ML model': [],
-    }
 
     print(f'\nML model: {ml_model}')
 
@@ -257,12 +261,12 @@ if cross_validation is True:
         y_pred_train = regr.predict(
             X = X_train,
             tasks_array = tasks_train,
-        ).reshape(y_train.shape)
+        )
         
         y_pred_test = regr.predict(
             X = X_test,
             tasks_array = tasks_test,
-        ).reshape(y_test.shape)
+        )
 
         err_abs_train = np.abs(y_train-y_pred_train)
         err_sqr_train = np.power((y_train-y_pred_train), 2)
@@ -301,28 +305,54 @@ if cross_validation is True:
     print(f'MAE test   = {mae_test_tot:7.4f} eV')
     print(f'RMSE test  = {rmse_test_tot:7.4f} eV')
 
-    df_err_data['Abs Err [eV]'] += list(err_abs_test_tot)
-    df_err_data['ML model'] += [ml_model]*len(err_abs_test_tot)
+# -----------------------------------------------------------------------------
+# PARITY PLOTS
+# -----------------------------------------------------------------------------
 
-    if parity_plots is True:
-        
+if parity_plots is True:
+    
+    results_dict = {}
+    if regression is True:
+        results_dict['regression'] = [y_regr, y_pred_regr]
+    if cross_validation is True:
+        results_dict[cross_valid_name] = [y_test_tot, y_pred_tot]
+    
+    for task in results_dict:
+    
         plt.style.use('ggplot')
         plt.rc('xtick', labelsize=labelsize) 
         plt.rc('ytick', labelsize=labelsize)
-        
+
         fig = plt.figure(figsize=(8, 8), dpi=100)
         ax = plt.subplot(111)
+        ax.set_xlim(-parity_lim, +parity_lim)
+        ax.set_ylim(-parity_lim, +parity_lim)
+
+        plt.plot(*results_dict[task], 'o')
+        plt.plot([-parity_lim, +parity_lim], [-parity_lim, +parity_lim], '--k')
         
-        plt.title(f"Parity Plot ({ml_model})")
         plt.xlabel("y real [eV]", fontsize=fontsize)
         plt.ylabel("y model [eV]", fontsize=fontsize)
-        plt.plot(y_test_tot, y_pred_tot, 'o')
-        ax.set_xlim(-2.50, +2.50)
-        ax.set_ylim(-2.50, +2.50)
-        plt.plot([-2.50, +2.50], [-2.50, +2.50], '--k')
-        plt.savefig('parity_plot.png')
+        plt.savefig(f'parity_plot_{task}.png')
 
-    if violin_plots is True:
+# -----------------------------------------------------------------------------
+# VIOLIN PLOTS
+# -----------------------------------------------------------------------------
+
+if violin_plots is True:
+
+    results_dict = {}
+    if regression is True:
+        results_dict['regression'] = err_abs_regr
+    if cross_validation is True:
+        results_dict[cross_valid_name] = err_abs_test_tot
+    
+    for task in results_dict:
+
+        df_err_data = {
+            'Abs Err [eV]': list(results_dict[task]),
+            'Task': [task]*len(results_dict[task]),
+        }
 
         df_err = pd.DataFrame(
             data = df_err_data,
@@ -330,22 +360,28 @@ if cross_validation is True:
         )
 
         plt.style.use('ggplot')
-        plt.rc('xtick', labelsize=labelsize) 
+        plt.rc('xtick', labelsize=labelsize)
         plt.rc('ytick', labelsize=labelsize)
-        fig, ax = plt.subplots()
+        
+        fig = plt.figure(figsize=(8, 8), dpi=100)
+        ax = plt.subplot(111)
+        ax.set_ylim(0.0, violin_lim)
+        
         sns.set_theme(style="whitegrid")
         sns.violinplot(
             data = df_err,
             y = 'Abs Err [eV]',
-            x = 'ML model',
+            x = 'Task',
             cut = 3.,
             linewidth = 1,
             palette = 'Set2',
             ax = ax,
         )
         sns.despine()
-        ax.set_ylim(0.0, 1.0)
-        plt.savefig('violin_plot.png')
+        
+        plt.ylabel("Abs Err [eV]", fontsize=fontsize)
+        plt.xlabel("Task", fontsize=fontsize)
+        plt.savefig(f'violin_plot_{task}.png')
 
 # -----------------------------------------------------------------------------
 # END

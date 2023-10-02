@@ -8,6 +8,7 @@
 
 import shutil
 import tempfile
+import warnings
 from datetime import datetime
 from typing import Optional, Union
 
@@ -82,6 +83,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         run_dir: Union[None, str] = "SISSO_dir",
         clean_run_dir: bool = False,
         SISSO_exe: str = "SISSO",
+        nprocs: int = 1,
     ):  # noqa: D417
         """Construct SISSORegressor class.
 
@@ -133,6 +135,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         self.run_dir = run_dir
         self.clean_run_dir = clean_run_dir
         self.SISSO_exe = SISSO_exe
+        self.nprocs = nprocs
 
     def fit(self, X, y, index=None, columns=None, tasks=None, tasks_array=None):
         """Fit a SISSO regression based on inputs X and output y.
@@ -285,7 +288,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         with cd(self.run_dir):
             self.sisso_in.to_file(filename="SISSO.in")
             sisso_dat.to_file(filename="train.dat")
-            job = SISSOJob(SISSO_exe=self.SISSO_exe)
+            job = SISSOJob(SISSO_exe=self.SISSO_exe, nprocs=self.nprocs)
             c = Custodian(jobs=[job], handlers=[], validators=[])
             c.run()
             self.sisso_out = SISSOOut.from_file(  # pylint: disable=W0201
@@ -295,8 +298,11 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
         # Clean run directory
         if (
             self.clean_run_dir
-        ):  # TODO: add check here to not remove "." if the user passes . ?
-            shutil.rmtree(self.run_dir)
+        ):  
+            if self.run_dir == ".":
+                warnings.warn("Run directory \".\" not removed.")
+            else:
+                shutil.rmtree(self.run_dir)
 
     def predict(self, X, index=None, tasks_array=None):
         """Predict output based on a fitted SISSO regression.
@@ -319,6 +325,7 @@ class SISSORegressor(RegressorMixin, BaseEstimator):
             for ii in range(y_pred_all.shape[0]):
                 y_pred.append(y_pred_all[ii, indices[ii]])
             y_pred = np.array(y_pred)
+        y_pred = y_pred.reshape(-1)
         return y_pred
 
     @classmethod
