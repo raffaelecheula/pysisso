@@ -367,6 +367,7 @@ if violin_plots is True:
         ax = plt.subplot(111)
         ax.set_ylim(0.0, violin_lim)
         
+        sns.reset_defaults()
         sns.set_theme(style="whitegrid")
         sns.violinplot(
             data = df_err,
